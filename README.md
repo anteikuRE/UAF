@@ -1,3 +1,86 @@
+# eBay UAF Setup Guide
+
+## Prerequisites
+- Java 8
+- Maven 3.x
+- Apache Tomcat 9
+
+## 1. Fix `fido-uaf-core/build.gradle`
+```gradle
+apply plugin: 'java'
+
+group = 'org.ebayopensource'
+version = '0.0.1-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.google.code.gson:gson:2.3.1'
+    implementation 'commons-codec:commons-codec:1.9'
+    implementation 'org.bouncycastle:bcprov-jdk15on:1.51'
+
+    testImplementation 'junit:junit:4.12'
+}
+```
+
+## 2. Build `fido-uaf-core`
+```cmd
+cd fido-uaf-core
+mvn clean install
+```
+
+## 3. Build `fidouaf`
+```cmd
+cd fidouaf
+mvn clean install
+```
+
+## 4. Deploy to Tomcat
+```cmd
+copy target\fidouaf-0.0.1-SNAPSHOT.war "C:\Program Files\Apache Software Foundation\Tomcat 9.0\webapps\fidouaf.war"
+```
+
+## 5. Start Tomcat
+Search for **Monitor Tomcat** in Start menu and click **Start**.
+
+## 6. Verify
+Open browser or run:
+```cmd
+curl http://localhost:8080/fidouaf/v1/history
+```
+Expected response: `[]`
+
+---
+
+## Redeploy After Changes
+1. `cd fidouaf && mvn clean install`
+2. Stop Tomcat
+3. Delete old deployment folder:
+```cmd
+rmdir /s /q "C:\Program Files\Apache Software Foundation\Tomcat 9.0\webapps\fidouaf"
+```
+4. Copy new WAR:
+```cmd
+copy target\fidouaf-0.0.1-SNAPSHOT.war "C:\Program Files\Apache Software Foundation\Tomcat 9.0\webapps\fidouaf.war"
+```
+5. Start Tomcat
+
+---
+
+## Available Endpoints
+| Method | URL | Description |
+|--------|-----|-------------|
+| GET | `/fidouaf/v1/history` | View operation history |
+| GET | `/fidouaf/v1/public/regRequest/{username}` | Get registration request |
+| GET | `/fidouaf/v1/public/authRequest` | Get authentication request |
+| GET | `/fidouaf/v1/public/uaf/facets` | Get trusted facet IDs |
+
+
+
+
+
 [![Build Status](https://secure.travis-ci.org/eBay/UAF.svg?branch=master)](https://travis-ci.org/eBay/UAF)  [![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/eBay/UAF)
 # UAF - Universal Authentication Framework
 
