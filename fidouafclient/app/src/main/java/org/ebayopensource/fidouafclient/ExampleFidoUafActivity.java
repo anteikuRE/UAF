@@ -78,9 +78,8 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
+        Log.d(TAG, "onCreate called, about to processOpAndFinish");
         fidoKeystore = FidoKeystore.createKeyStore(getApplicationContext());
-
         keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
         Bundle extras = this.getIntent().getExtras();
         setContentView(R.layout.activity_fido_uaf);
@@ -88,6 +87,9 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
         uafMsg = (TextView) findViewById(R.id.textViewOpMsg);
         operation.setText(extras.getString("UAFIntentType"));
         uafMsg.setText(extras.getString("message"));
+        Log.d(TAG, "about to call processOpAndFinish");
+        // NOTE | IMPORTANT: method below responsible for disabling check of user presence and user verification (pin whatever)
+        processOpAndFinish();
     }
 
     private void processOpAndFinish() {
@@ -100,65 +102,70 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
             Log.w(TAG, "inMsg is empty");
         }
     }
-
     private void finishWithError(String errorMessage) {
         Bundle data = new Bundle();
-
         data.putString("message", errorMessage);
+        data.putString("UAFIntentType", "UAF_OPERATION_RESULT");
+        data.putShort("errorCode", (short) 0x01);
         Intent intent = new Intent();
         intent.putExtras(data);
         setResult(RESULT_CANCELED, intent);
         finish();
     }
+//    private void finishWithError(String errorMessage) {
+//        Bundle data = new Bundle();
+//
+//        data.putString("message", errorMessage);
+//        Intent intent = new Intent();
+//        intent.putExtras(data);
+//        setResult(RESULT_CANCELED, intent);
+//        finish();
+//    }
 
 
     private void processOp(String inUafOperationMsg) {
         Log.d(TAG, "processOp: " + inUafOperationMsg);
-
         try {
-            String msg = "";
             final String inMsg = extract(inUafOperationMsg);
+
+            if (inMsg == null || inMsg.isEmpty()) {
+                finishWithError("PROTOCOL_ERROR: could not extract uafProtocolMessage");
+                return;
+            }
+
             if (inMsg.contains("\"Reg\"")) {
                 Log.d(TAG, "op=Reg");
-
                 RegistrationRequest regRequest = gson.fromJson(inMsg, RegistrationRequest[].class)[0];
                 regOp = new Reg(regRequest.username, fidoKeystore);
-                msg = regOp.register(inMsg);
-
+                String msg = regOp.register(inMsg);
                 returnResultAndFinish(msg);
             } else if (inMsg.contains("\"Auth\"")) {
                 Log.d(TAG, "op=Auth");
                 authReq = inMsg;
-
                 String username = Preferences.getSettingsParam("username");
                 Log.d(TAG, "username: " + username);
-
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     if (supportsFingerprintAuth()) {
                         startFingerprintAuth();
                     } else {
-                        // assume already authenticated via confirmCredentials()
                         FidoSigner fidoSigner = createFidoSigner();
-                        // fido signer doesn't need key pair, handled internally
                         String authMsg = authOp.auth(authReq, fidoSigner, null);
-
                         returnResultAndFinish(authMsg);
                     }
                 } else {
                     FidoSigner fidoSigner = new FidoSignerBC();
                     KeyPair keyPair = fidoKeystore.getKeyPair(username);
-                    msg = authOp.auth(authReq, fidoSigner, keyPair);
-
+                    String msg = authOp.auth(authReq, fidoSigner, keyPair);
                     returnResultAndFinish(msg);
                 }
             } else if (inMsg.contains("\"Dereg\"")) {
                 Log.d(TAG, "op=Dereg");
-
-                msg = inUafOperationMsg;
-                returnResultAndFinish(msg);
+                returnResultAndFinish(inUafOperationMsg);
+            } else {
+                finishWithError("PROTOCOL_ERROR: unknown or missing operation");
             }
-        } catch (GeneralSecurityException | SecurityException | IOException e) {
-            String errorMessage = "Error : " + e.getMessage();
+        } catch (Exception e) {
+            String errorMessage = "Error: " + e.getMessage();
             Log.e(TAG, errorMessage, e);
             finishWithError(errorMessage);
         }
@@ -189,15 +196,24 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
         Log.d(TAG, "Showing fragment: " + fragment);
         fragment.show(getFragmentManager(), DIALOG_FRAGMENT_TAG);
     }
-
     private void returnResultAndFinish(String msg) {
         Bundle data = new Bundle();
         data.putString("message", msg);
+        data.putString("UAFIntentType", "UAF_OPERATION_RESULT");
+        data.putShort("errorCode", (short) 0x0);
         Intent intent = new Intent();
         intent.putExtras(data);
         setResult(RESULT_OK, intent);
         finish();
     }
+//    private void returnResultAndFinish(String msg) {
+//        Bundle data = new Bundle();
+//        data.putString("message", msg);
+//        Intent intent = new Intent();
+//        intent.putExtras(data);
+//        setResult(RESULT_OK, intent);
+//        finish();
+//    }
 
     @RequiresApi(api = Build.VERSION_CODES.M)
     @Override
@@ -306,17 +322,31 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
         }
         return super.onOptionsItemSelected(item);
     }
-
     private String extract(String inMsg) {
         try {
             JSONObject tmpJson = new JSONObject(inMsg);
-            String uafMsg = tmpJson.getString("uafProtocolMessage");
-            uafMsg.replace("\\\"", "\"");
-            return uafMsg;
+            // Try getting as string first
+            try {
+                return tmpJson.getString("uafProtocolMessage");
+            } catch (Exception e) {
+                // If it's not a string, get it as array/object
+                return tmpJson.get("uafProtocolMessage").toString();
+            }
         } catch (Exception e) {
             logger.log(Level.WARNING, "Input message is invalid!", e);
             return "";
         }
-
     }
+//    private String extract(String inMsg) {
+//        try {
+//            JSONObject tmpJson = new JSONObject(inMsg);
+//            String uafMsg = tmpJson.getString("uafProtocolMessage");
+//            uafMsg.replace("\\\"", "\"");
+//            return uafMsg;
+//        } catch (Exception e) {
+//            logger.log(Level.WARNING, "Input message is invalid!", e);
+//            return "";
+//        }
+//
+//    }
 }
