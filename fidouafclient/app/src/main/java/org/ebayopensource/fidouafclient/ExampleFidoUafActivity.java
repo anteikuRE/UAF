@@ -136,7 +136,9 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
             if (inMsg.contains("\"Reg\"")) {
                 Log.d(TAG, "op=Reg");
                 RegistrationRequest regRequest = gson.fromJson(inMsg, RegistrationRequest[].class)[0];
-                regOp = new Reg(regRequest.username, fidoKeystore);
+                String facetId = // get it from Intent extras, passed from your Kotlin code
+                        this.getIntent().getExtras().getString("facetId", "");
+                regOp = new Reg(regRequest.username, fidoKeystore, facetId);
                 String msg = regOp.register(inMsg);
                 returnResultAndFinish(msg);
             } else if (inMsg.contains("\"Auth\"")) {

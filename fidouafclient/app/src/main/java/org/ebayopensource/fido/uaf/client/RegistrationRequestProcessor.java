@@ -30,7 +30,16 @@ import java.security.KeyPair;
 
 
 public class RegistrationRequestProcessor {
-	
+
+	private String facetId;
+
+	public RegistrationRequestProcessor() {
+		this.facetId = "";
+	}
+
+	public RegistrationRequestProcessor(String facetId) {
+		this.facetId = facetId;
+	}
 	public RegistrationResponse processRequest(RegistrationRequest regRequest, KeyPair keyPair) {
 		RegistrationResponse response = new RegistrationResponse();
 		RegAssertionBuilder builder = new RegAssertionBuilder(keyPair);
@@ -56,7 +65,7 @@ public class RegistrationRequestProcessor {
 	}
 
 	private String getFacetId() {
-		return "";
+		return this.facetId;
 	}
 
 	private void setAssertions(RegistrationResponse response, RegAssertionBuilder builder) {

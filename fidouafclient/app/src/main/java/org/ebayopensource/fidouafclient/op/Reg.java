@@ -50,7 +50,7 @@ public class Reg {
 		return Curl.getInSeparateThread(url);
 	}
 	
-	public RegisterIn getRegIn(String username){
+	public RegisterIn getRegIn(String username, String facetId){
 		RegisterIn ret = new RegisterIn();
 		String url = Endpoints.getRegRequestEndpoint()+username;
 		String regRespFromServer = Curl.getInSeparateThread(url);
@@ -59,9 +59,9 @@ public class Reg {
 			regRequest = gson.fromJson(regRespFromServer, RegistrationRequest[].class)[0];
 			ret.appID = regRequest.header.appID;
 			ret.attestationType = 15879;
-			ret.finalChallenge = getFinalChalenge(regRequest);
+			ret.finalChallenge = getFinalChalenge(regRequest, facetId);
 			ret.username = username;
-			freezeRegResponse(regRequest);
+			freezeRegResponse(regRequest, facetId);
 		} catch (Exception e){
 			
 		}
@@ -119,11 +119,11 @@ public class Reg {
 		return ret;
 	}
 
-	private String getFinalChalenge(RegistrationRequest regRequest) {
+	private String getFinalChalenge(RegistrationRequest regRequest, String facetId) {
 		FinalChallengeParams fcParams = new FinalChallengeParams();
 		fcParams.appID = regRequest.header.appID;
 		Preferences.setSettingsParam("appID", fcParams.appID);
-		fcParams.facetID = getFacetId();
+		fcParams.facetID = facetId;
 		fcParams.challenge = regRequest.challenge;
 		fcParams.channelBinding = new ChannelBinding();
 		fcParams.channelBinding.cid_pubkey = "";
@@ -138,12 +138,12 @@ public class Reg {
 		return "";
 	}
 	
-	public void freezeRegResponse (RegistrationRequest regRequest){
-		String json = gson.toJson(getRegResponse(regRequest), RegistrationResponse.class);
+	public void freezeRegResponse (RegistrationRequest regRequest, String facetId){
+		String json = gson.toJson(getRegResponse(regRequest, facetId), RegistrationResponse.class);
 		Preferences.setSettingsParam("regResponse", json);
 	}
 	
-	public RegistrationResponse getRegResponse (RegistrationRequest regRequest){
+	public RegistrationResponse getRegResponse (RegistrationRequest regRequest, String facetId){
 		RegistrationResponse response = new RegistrationResponse();
 		
 		response.header = new OperationHeader();
@@ -151,7 +151,7 @@ public class Reg {
 		response.header.appID = regRequest.header.appID;
 		response.header.op = regRequest.header.op;
 		response.header.upv = regRequest.header.upv;
-		response.fcParams = getFinalChalenge(regRequest);
+		response.fcParams = getFinalChalenge(regRequest, facetId);
 		
 		return response;
 	}

@@ -34,10 +34,11 @@ public class Reg {
 
     private String username;
     private FidoKeystore fidoKeystore;
-
-    public Reg(String username, FidoKeystore fidoKeystore) {
+    private String facetId;
+    public Reg(String username, FidoKeystore fidoKeystore, String facetId) {
         this.username = username;
         this.fidoKeystore = fidoKeystore;
+        this.facetId = facetId;
     }
 
     public String register(String uafMsg) {
@@ -45,7 +46,7 @@ public class Reg {
 
         KeyPair keyPair = fidoKeystore.generateKeyPair(username);
         logger.info("  [UAF][2]Reg - KeyPair generated" + keyPair);
-        RegistrationRequestProcessor p = new RegistrationRequestProcessor();
+        RegistrationRequestProcessor p = new RegistrationRequestProcessor(facetId);
         RegistrationResponse[] ret = new RegistrationResponse[1];
         RegistrationResponse regResponse = p.processRequest(getRegistrationRequest(uafMsg), keyPair);
         logger.info("  [UAF][4]Reg - Reg Response Formed  ");
