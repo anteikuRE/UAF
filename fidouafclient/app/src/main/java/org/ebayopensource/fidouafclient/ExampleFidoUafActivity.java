@@ -89,7 +89,7 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
         uafMsg.setText(extras.getString("message"));
         Log.d(TAG, "about to call processOpAndFinish");
         // NOTE | IMPORTANT: method below responsible for disabling check of user presence and user verification (pin whatever)
-        processOpAndFinish();
+//        processOpAndFinish();
     }
 
     private void processOpAndFinish() {
@@ -136,6 +136,8 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
             if (inMsg.contains("\"Reg\"")) {
                 Log.d(TAG, "op=Reg");
                 RegistrationRequest regRequest = gson.fromJson(inMsg, RegistrationRequest[].class)[0];
+                // NOTE | IMPORTANT: Authorization only works with real UV (cant use processOpAndFinish)
+                Preferences.setSettingsParam("username", regRequest.username);
                 String facetId = // get it from Intent extras, passed from your Kotlin code
                         this.getIntent().getExtras().getString("facetId", "");
                 regOp = new Reg(regRequest.username, fidoKeystore, facetId);
