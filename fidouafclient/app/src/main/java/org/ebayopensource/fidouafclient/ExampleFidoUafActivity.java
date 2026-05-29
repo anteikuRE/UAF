@@ -89,18 +89,104 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
         uafMsg.setText(extras.getString("message"));
         Log.d(TAG, "about to call processOpAndFinish");
         // NOTE | IMPORTANT: method below responsible for disabling check of user presence and user verification (pin whatever)
-//        processOpAndFinish();
+        processOpAndFinish();
     }
 
     private void processOpAndFinish() {
         String inMsg = this.getIntent().getExtras().getString("message");
+        String mimeType = this.getIntent().getType();
         Log.d(TAG, "inMsg " + inMsg);
 
         if (inMsg != null && inMsg.length() > 0) {
-            processOp(inMsg);
+            if ("application/fido.uaf_asm+json".equals(mimeType)) {
+                processAsmOp(inMsg);
+            } else {
+                processOp(inMsg); // Standard Client requests
+            }
         } else {
             Log.w(TAG, "inMsg is empty");
         }
+    }
+    private void processAsmOp(String inMsg) {
+        Log.d(TAG, "processAsmOp: " + inMsg);
+        try {
+            if (inMsg.contains("\"GetInfo\"")) {
+                Log.d(TAG, "op=GetInfo");
+
+                String getInfoResponse = "{" +
+                        "\"statusCode\": 0, " +
+                        "\"responseData\": {" +
+                        "\"Authenticators\": [{" +
+                        "\"authenticatorIndex\": 0, " + // Match the index requested by OpenSettings
+                        "\"asmVersions\": [{\"major\": 1, \"minor\": 1}, {\"major\": 1, \"minor\": 2}], " +
+                        "\"isUserPresenceAndVerificationSupported\": true, " +
+                        "\"isSecondFactorOnly\": false, " +
+                        "\"assertionScheme\": \"UAFV1TLV\", " +
+                        "\"attachmentHint\": 1, " +
+                        "\"tcDisplay\": 0, " +
+                        "\"authenticationAlgorithm\": 1, " +
+                        "\"publicKeyAlgAndEncoding\": 256, " +
+                        "\"attestationTypes\": [15879], " +
+                        "\"userVerification\": 2, " +
+                        "\"keyProtection\": 1, " +
+                        "\"matcherProtection\": 1, " +
+                        "\"cryptoStrength\": 128, " +
+                        "\"aaguid\": \"00000000-0000-0000-0000-000000000000\"" +
+                        "}]}}";
+
+                returnAsmResultAndFinish(getInfoResponse);
+                Log.d(TAG, "FINISHING UP GetInfo");
+
+            } else if (inMsg.contains("\"OpenSettings\"")) {
+                Log.d(TAG, "op=OpenSettings");
+
+                // Return a simple success status for OpenSettings
+                String openSettingsResponse = "{\"statusCode\": 0}";
+
+                returnAsmResultAndFinish(openSettingsResponse);
+                Log.d(TAG, "FINISHING UP OpenSettings");
+
+            } else {
+                // Catch Register, Authenticate, Deregister, or unknown commands
+                Log.w(TAG, "ASM_ERROR: Unhandled ASM operation. Returning ERR_UNKNOWN (0x01)");
+                returnAsmErrorAndFinish((short) 0x01);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "ASM Error processing request: " + e.getMessage(), e);
+            // Catch JSON parsing failures
+            returnAsmErrorAndFinish((short) 0x01);
+        }
+    }
+    private void returnAsmResultAndFinish(String msg) {
+        Bundle data = new Bundle();
+        data.putString("message", msg);
+        data.putString("ASMIntentType", "ASMCall_Result"); // Satisfies KMP onActivityResult
+        data.putShort("errorCode", (short) 0x0);
+        Intent intent = new Intent();
+        intent.putExtras(data);
+        setResult(RESULT_OK, intent);
+        Log.d(TAG, "FINISHING UP");
+        finish();
+    }
+    private void returnAsmErrorAndFinish(short errorCode) {
+        Bundle data = new Bundle();
+
+        // The FIDO ASM spec requires the statusCode to be in the JSON payload
+        String errorJson = "{\"statusCode\": " + errorCode + "}";
+        data.putString("message", errorJson);
+
+        // Satisfy the KMP transport layer's strict Intent Type checks
+        data.putString("ASMIntentType", "ASMCall_Result");
+        data.putShort("errorCode", errorCode);
+
+        Intent intent = new Intent();
+        intent.putExtras(data);
+
+        // Using RESULT_OK ensures it passes the Android activity check in KMP,
+        // but the errorCode > 0 will trigger your `onProcessRequestError` callback.
+        setResult(RESULT_OK, intent);
+        Log.d(TAG, "FINISHING UP ERR");
+        finish();
     }
     private void finishWithError(String errorMessage) {
         Bundle data = new Bundle();
