@@ -64,12 +64,182 @@ import org.ebayopensource.fidouaf.stats.Info;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 @Path("/v1")
 public class FidoUafResource {
 
 	protected Gson gson = new GsonBuilder().disableHtmlEscaping().create();
+// Add these two methods to FidoUafResource.java
+// They adapt the conformance tool's /get + /respond convention
+// to the existing server logic.
+//
+// Also add this import at the top of the file:
+// import com.google.gson.JsonObject;
+// import com.google.gson.JsonParser;
 
+	/**
+	 * POST /v1/public/get
+	 *
+	 * Conformance tool sends:
+	 *   { "op": "Reg"|"Auth"|"Dereg", "context": "{\"username\":\"...\",\"transaction\":\"...\"}" }
+	 *
+	 * Returns:
+	 *   { "statusCode": 1200, "uafRequest": "[...]" }
+	 */
+	@POST
+	@Path("/public/get")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public String conformanceGet(String payload) {
+		Gson gson = new GsonBuilder().disableHtmlEscaping().create();
+
+		JsonObject req = JsonParser.parseString(payload).getAsJsonObject();
+		String op = req.get("op").getAsString();
+
+		// parse context — it's a JSON-encoded string
+		String contextStr = req.has("context") ? req.get("context").getAsString() : "{}";
+		JsonObject context = JsonParser.parseString(contextStr).getAsJsonObject();
+		String username = context.has("username")
+				? context.get("username").getAsString()
+				: "FIDOnotTheDogAlliance";
+
+		JsonObject response = new JsonObject();
+
+		if (op.equals("Reg")) {
+			RegistrationRequest[] result = regReqPublic(username);
+			response.addProperty("statusCode", 1200);
+			response.addProperty("uafRequest", gson.toJson(result));
+			response.addProperty("op", "Reg");
+			response.addProperty("lifetimeMillis", 5 * 60 * 1000);
+
+		} else if (op.equals("Auth")) {
+			String transaction = context.has("transaction") && !context.get("transaction").isJsonNull()
+					? context.get("transaction").getAsString()
+					: null;
+
+			AuthenticationRequest[] result = getAuthReqObj();
+
+			if (transaction != null) {
+				setTransaction(transaction, result);
+			}
+
+			response.addProperty("statusCode", 1200);
+			response.addProperty("uafRequest", gson.toJson(result));
+			response.addProperty("op", "Auth");
+			response.addProperty("lifetimeMillis", 5 * 60 * 1000);
+
+		} else if (op.equals("Dereg")) {
+			// For Dereg, build a deregistration request for the given username
+			String deregPayload = gson.toJson(context);
+			String result = deregRequestPublic(deregPayload);
+
+			int statusCode;
+			if (result.equalsIgnoreCase("Success")) {
+				statusCode = 1200;
+			} else if (result.equalsIgnoreCase("Failure: Problem in deleting record from local DB")) {
+				statusCode = 1404;
+			} else if (result.equalsIgnoreCase("Failure: problem processing deregistration request")) {
+				statusCode = 1491;
+			} else {
+				statusCode = 1500;
+			}
+
+			response.addProperty("statusCode", statusCode);
+			response.addProperty("op", "Dereg");
+			response.addProperty("lifetimeMillis", 0);
+
+		} else {
+			response.addProperty("statusCode", 1500);
+			response.addProperty("Description", "Unknown op: " + op);
+		}
+
+		return gson.toJson(response);
+	}
+
+	/**
+	 * POST /v1/public/respond
+	 *
+	 * Conformance tool sends:
+	 *   { "uafResponse": "[{\"header\":{\"op\":\"Reg\"...},...}]" }
+	 *
+	 * Returns:
+	 *   { "statusCode": 1200, "Description": "OK. Operation completed" }
+	 */
+	@POST
+	@Path("/public/respond")
+	@Consumes(MediaType.APPLICATION_JSON)
+	@Produces(MediaType.APPLICATION_JSON)
+	public ServerResponse conformanceRespond(String payload) {
+		ServerResponse servResp = new ServerResponse();
+
+		if (payload == null || payload.isEmpty()) {
+			servResp.statusCode = 1500;
+			servResp.Description = "Error: payload is empty";
+			return servResp;
+		}
+
+		JsonObject req = JsonParser.parseString(payload).getAsJsonObject();
+		String uafResponse = req.get("uafResponse").getAsString();
+
+		// detect op from the inner UAF message
+		String op = "";
+		try {
+			op = uafResponse.substring(
+					uafResponse.indexOf("\"op\"") + 6,
+					uafResponse.indexOf(",", uafResponse.indexOf("\"op\"")) - 1
+			).trim().replace("\"", "");
+		} catch (Exception e) {
+			servResp.statusCode = 1500;
+			servResp.Description = "Error: could not parse op from uafResponse";
+			return servResp;
+		}
+
+		if (op.equals("Reg")) {
+			RegistrationRecord[] result = processRegResponse(uafResponse);
+			if (result[0].status.equals("SUCCESS")) {
+				servResp.statusCode = 1200;
+				servResp.Description = "OK. Operation completed";
+			} else if (result[0].status.equals("ASSERTIONS_CHECK_FAILED")) {
+				servResp.statusCode = 1496;
+				servResp.Description = result[0].status;
+			} else if (result[0].status.equals("INVALID_SERVER_DATA_EXPIRED")
+					|| result[0].status.equals("INVALID_SERVER_DATA_SIGNATURE_NO_MATCH")
+					|| result[0].status.equals("INVALID_SERVER_DATA_CHECK_FAILED")) {
+				servResp.statusCode = 1491;
+				servResp.Description = result[0].status;
+			} else {
+				servResp.statusCode = 1500;
+				servResp.Description = result[0].status;
+			}
+
+		} else if (op.equals("Auth")) {
+			AuthenticatorRecord[] result = processAuthResponse(uafResponse);
+			if (result[0].status.equals("SUCCESS")) {
+				servResp.statusCode = 1200;
+				servResp.Description = "OK. Operation completed";
+			} else if (result[0].status.equals("FAILED_SIGNATURE_NOT_VALID")
+					|| result[0].status.equals("FAILED_SIGNATURE_VERIFICATION")
+					|| result[0].status.equals("FAILED_ASSERTION_VERIFICATION")) {
+				servResp.statusCode = 1496;
+				servResp.Description = result[0].status;
+			} else if (result[0].status.equals("INVALID_SERVER_DATA_EXPIRED")
+					|| result[0].status.equals("INVALID_SERVER_DATA_SIGNATURE_NO_MATCH")
+					|| result[0].status.equals("INVALID_SERVER_DATA_CHECK_FAILED")) {
+				servResp.statusCode = 1491;
+				servResp.Description = result[0].status;
+			} else {
+				servResp.statusCode = 1500;
+				servResp.Description = result[0].status;
+			}
+
+		} else {
+			servResp.statusCode = 1500;
+			servResp.Description = "Unknown op: " + op;
+		}
+
+		return servResp;
+	}
 	@GET
 	@Path("/info")
 	@Produces(MediaType.APPLICATION_JSON)
@@ -164,7 +334,7 @@ public class FidoUafResource {
 				"4e4e#0001", "5143#0001", "0011#0701", "0013#0001",
 				"0014#0000", "0014#0001", "53EC#C002", "DAB8#8001",
 				"DAB8#0011", "DAB8#8011", "5143#0111", "5143#0120",
-				"4746#F816", "53EC#3801" };
+				"4746#F816", "53EC#3801", "FFFF#FC01" };
 		List<String> retList = new ArrayList<String>(Arrays.asList(ret));
 		retList.addAll(Dash.getInstance().uuids);
 		return retList.toArray(new String[0]);
@@ -194,7 +364,9 @@ public class FidoUafResource {
 				"android:apk-key-hash:Df+2X53Z0UscvUu6obxC3rIfFyk",
 				"android:apk-key-hash:bE0f1WtRJrZv/C0y9CM73bAUqiI",
 				"android:apk-key-hash:Lir5oIjf552K/XN4bTul0VS3GfM",
-				"https://openidconnect.ebay.com" };
+				"https://openidconnect.ebay.com",
+				"https://uaf.example.com"
+		};
 		List<String> trustedIdsList = new ArrayList<String>(Arrays.asList(trustedIds));
 		trustedIdsList.addAll(Dash.getInstance().facetIds);
 		trustedIdsList.add(readFacet());
@@ -230,9 +402,10 @@ public class FidoUafResource {
 	private String getAppId() {
 		// You can get it dynamically.
 		// It only works if your server is not behind a reverse proxy
-		return uriInfo.getBaseUri() + "v1/public/uaf/facets";
+//		return uriInfo.getBaseUri() + "v1/public/uaf/facets";
 		// Or you can define it statically
 //		return "https://www.head2toes.org/fidouaf/v1/public/uaf/facets";
+		return "https://uaf.example.com";
 	}
 
 	@POST
