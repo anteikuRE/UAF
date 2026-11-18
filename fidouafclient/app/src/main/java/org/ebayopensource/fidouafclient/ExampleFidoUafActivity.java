@@ -43,7 +43,9 @@ import org.ebayopensource.fido.uaf.msg.RegistrationRequest;
 import org.ebayopensource.fidouafclient.fp.FingerprintAuthProcessor;
 import org.ebayopensource.fidouafclient.fp.FingerprintAuthenticationDialogFragment;
 import org.ebayopensource.fidouafclient.util.Preferences;
+import org.json.JSONArray;
 import org.json.JSONObject;
+import org.ebayopensource.fido.uaf.client.RegAssertionBuilder;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -89,13 +91,30 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
         uafMsg.setText(extras.getString("message"));
         Log.d(TAG, "about to call processOpAndFinish");
         // NOTE | IMPORTANT: method below responsible for disabling check of user presence and user verification (pin whatever)
-        processOpAndFinish();
+//        processOpAndFinish();
     }
+
+    private static final short ERR_NO_SUITABLE_AUTHENTICATOR = 0x03;
+    private static final short ERR_PROTOCOL_ERROR = 0x07;
 
     private void processOpAndFinish() {
         String inMsg = this.getIntent().getExtras().getString("message");
         String mimeType = this.getIntent().getType();
-        Log.d(TAG, "inMsg " + inMsg);
+        String intentType = this.getIntent().getExtras().getString("UAFIntentType");
+        Log.d(TAG, "intentType " + intentType + ", inMsg " + inMsg);
+
+        // DISCOVER carries no message (UAF client intent API), so it must be answered before the
+        // empty-message check below; otherwise the activity never finishes and the caller hangs.
+        if (!"application/fido.uaf_asm+json".equals(mimeType)) {
+            if ("DISCOVER".equals(intentType)) {
+                processDiscover();
+                return;
+            }
+            if ("CHECK_POLICY".equals(intentType)) {
+                processCheckPolicy(inMsg);
+                return;
+            }
+        }
 
         if (inMsg != null && inMsg.length() > 0) {
             if ("application/fido.uaf_asm+json".equals(mimeType)) {
@@ -107,6 +126,87 @@ public class ExampleFidoUafActivity extends Activity implements FingerprintAuthP
             Log.w(TAG, "inMsg is empty");
         }
     }
+    private void processDiscover() {
+        try {
+            JSONObject v11 = new JSONObject().put("major", 1).put("minor", 1);
+            JSONObject v12 = new JSONObject().put("major", 1).put("minor", 2);
+
+            JSONObject authenticator = new JSONObject()
+                    .put("title", "eBay UAF Authenticator")
+                    .put("aaid", RegAssertionBuilder.AAID)
+                    .put("description", "eBay UAF demo authenticator")
+                    .put("supportedUAFVersions", new JSONArray().put(v11).put(v12))
+                    .put("assertionScheme", "UAFV1TLV")
+                    .put("authenticationAlgorithm", 1)
+                    .put("attestationTypes", new JSONArray().put(15879))
+                    .put("userVerification", 2)
+                    .put("keyProtection", 1)
+                    .put("matcherProtection", 1)
+                    .put("attachmentHint", 1)
+                    .put("isSecondFactorOnly", false)
+                    .put("tcDisplay", 0)
+                    .put("supportedExtensionIDs", new JSONArray());
+
+            JSONObject discoveryData = new JSONObject()
+                    .put("supportedUAFVersions", new JSONArray().put(v11).put(v12))
+                    .put("clientVendor", "eBay")
+                    .put("clientVersion", v12)
+                    .put("availableAuthenticators", new JSONArray().put(authenticator));
+
+            Bundle data = new Bundle();
+            data.putString("UAFIntentType", "DISCOVER_RESULT");
+            data.putString("discoveryData", discoveryData.toString());
+            data.putShort("errorCode", (short) 0x0);
+            Intent intent = new Intent();
+            intent.putExtras(data);
+            setResult(RESULT_OK, intent);
+            finish();
+        } catch (Exception e) {
+            Log.e(TAG, "DISCOVER failed: " + e.getMessage(), e);
+            returnTypedErrorAndFinish("DISCOVER_RESULT", ERR_PROTOCOL_ERROR);
+        }
+    }
+
+    private void processCheckPolicy(String inUafOperationMsg) {
+        short errorCode = 0x0;
+        try {
+            String inMsg = extract(inUafOperationMsg);
+            JSONArray requests = new JSONArray(inMsg);
+            JSONArray accepted = requests.getJSONObject(0)
+                    .getJSONObject("policy").optJSONArray("accepted");
+            boolean anyAaidListed = false;
+            boolean ours = false;
+            if (accepted != null) {
+                for (int i = 0; i < accepted.length(); i++) {
+                    JSONArray group = accepted.getJSONArray(i);
+                    for (int j = 0; j < group.length(); j++) {
+                        JSONArray aaids = group.getJSONObject(j).optJSONArray("aaid");
+                        if (aaids == null) continue;
+                        for (int k = 0; k < aaids.length(); k++) {
+                            anyAaidListed = true;
+                            if (RegAssertionBuilder.AAID.equalsIgnoreCase(aaids.getString(k))) ours = true;
+                        }
+                    }
+                }
+            }
+            if (anyAaidListed && !ours) errorCode = ERR_NO_SUITABLE_AUTHENTICATOR;
+        } catch (Exception e) {
+            Log.e(TAG, "CHECK_POLICY failed: " + e.getMessage(), e);
+            errorCode = ERR_PROTOCOL_ERROR;
+        }
+        returnTypedErrorAndFinish("CHECK_POLICY_RESULT", errorCode);
+    }
+
+    private void returnTypedErrorAndFinish(String resultType, short errorCode) {
+        Bundle data = new Bundle();
+        data.putString("UAFIntentType", resultType);
+        data.putShort("errorCode", errorCode);
+        Intent intent = new Intent();
+        intent.putExtras(data);
+        setResult(RESULT_OK, intent);
+        finish();
+    }
+
     private void processAsmOp(String inMsg) {
         Log.d(TAG, "processAsmOp: " + inMsg);
         try {
